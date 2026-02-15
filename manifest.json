@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MoeKoe Music Total Play time",
   "version": "1.0.0",
-  "description": "MoeKoe Music 累计听歌时长计算",
+  "description": "MoeKoe Music 累计听歌时长插件",
   "permissions": ["storage"], 
   "content_scripts": [
     {
@@ -17,7 +17,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "累计听歌时长请搭配时长显示插件使用"
+    "default_title": "累计听歌时长插件"
   },
   "icons": {
     "256": "icons.jpg"
