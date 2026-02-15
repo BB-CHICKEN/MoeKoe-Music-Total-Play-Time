@@ -229,7 +229,7 @@
   ensureDisplayElement();
   
   // 定时更新显示（每秒）
-  setInterval(updateDisplay, 1000);
+  setInterval(updateDisplay, 30000);
   
   // 页面卸载时清理
   window.addEventListener('beforeunload', () => {

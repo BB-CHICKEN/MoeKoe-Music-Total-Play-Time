@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MoeKoe Music Total Play time",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MoeKoe Music 累计听歌时长插件",
   "permissions": ["storage"], 
   "content_scripts": [
