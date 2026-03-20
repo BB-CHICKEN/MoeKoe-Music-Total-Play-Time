@@ -1,8 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "MoeKoe Music Total Play time",
+  "name": "MoeKoe Music 累计听歌时长插件",
+  "plugin_id":"Total-Play-time",
   "version": "1.2.0",
   "description": "MoeKoe Music 累计听歌时长插件",
+  "author": {
+    "name": "BB-Ji",
+    "url": "https://github.com/BB-CHICKEN"
+  },
   "permissions": ["storage"], 
   "content_scripts": [
     {
