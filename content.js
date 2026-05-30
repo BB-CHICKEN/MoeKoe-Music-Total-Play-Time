@@ -4,15 +4,15 @@
 
   const TOTAL_KEY = 'moekoe_playback_total';     // 存储总秒数
   const STATE_KEY = 'moekoe_playback_state';     // 存储播放状态
-  const PROGRESS_KEY = 'player_progress';
+  const PROGRESS_KEY = 'player_progress';        // 当前播放进度(key可能因网站更新变动，需确认)
+  const CURRENT_SONG_KEY = 'current_song';       // 当前歌曲详细信息 JSON
 
   // 默认数据
   const defaultTotal = { totalSeconds: 0 };
   const defaultState = {
-    lastTrackId: '',
-    lastPosition: 0,
-    lastCheckTime: 0,
-    lastPlayedTrack: null
+    lastTrackHash: '',       // 使用 hash 作为唯一ID
+    lastPosition: 0,         // 上次记录的播放进度(秒)
+    lastCheckTime: 0,        // 上次检查的时间戳(ms)
   };
 
   // ---------- 读取存储（分离）----------
@@ -63,114 +63,143 @@
 
   // 格式化显示
   function formatHM(seconds) {
+    if (!seconds || seconds < 0) seconds = 0;
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     return hrs > 0 ? `${hrs}小时 ${mins}分钟` : `${mins}分钟`;
   }
 
-  // 获取当前播放信息
+  // 获取当前播放信息 (从 current_song JSON 获取)
   function getCurrentPlaybackInfo() {
     let currentTime = 0;
+    let songData = null;
+
+    // 1. 获取当前进度
     try {
-      const saved = localStorage.getItem(PROGRESS_KEY);
-      if (saved !== null) currentTime = parseFloat(saved) || 0;
+      const savedProgress = localStorage.getItem(PROGRESS_KEY);
+      if (savedProgress !== null) {
+        currentTime = parseFloat(savedProgress);
+        if (isNaN(currentTime)) currentTime = 0;
+      }
     } catch (e) {}
 
-    const titleEl = document.querySelector('.song-title, .track-title, [class*="title"], .music-title');
-    const artistEl = document.querySelector('.song-artist, .track-artist, [class*="artist"], .music-artist');
+    // 2. 获取歌曲详情
+    try {
+      const songRaw = localStorage.getItem(CURRENT_SONG_KEY);
+      if (songRaw) {
+        songData = JSON.parse(songRaw);
+      }
+    } catch (e) {}
 
-    let title = titleEl?.textContent?.trim() || '未知歌曲';
-    let artist = artistEl?.textContent?.trim() || '未知艺术家';
-
-    if (title === '未知歌曲') {
-      try { const t = localStorage.getItem('current_song_title'); if (t) title = t; } catch (e) {}
+    // 如果没有有效的歌曲数据，返回 null
+    if (!songData || !songData.name) {
+      return null;
     }
-    if (artist === '未知艺术家') {
-      try { const a = localStorage.getItem('current_song_artist'); if (a) artist = a; } catch (e) {}
-    }
 
-    return { title, artist, currentTime, timestamp: Date.now() };
+    return {
+      title: songData.name,
+      artist: songData.author || '未知艺术家',
+      hash: songData.hash || songData.playHash || `${songData.name}|${songData.author}`, // 优先用 hash
+      currentTime: currentTime,
+      timestamp: Date.now()
+    };
   }
 
   // 核心统计对象
   const stats = {
-    _total: loadTotal(),      // { totalSeconds }
-    _state: loadState(),      // 其他状态
+    _total: loadTotal(),
+    _state: loadState(),
 
     // 每秒更新统计
     update: function() {
-      // 1. 同步外部对 totalSeconds 的修改
-      try {
-        const raw = localStorage.getItem(TOTAL_KEY);
-        if (raw) {
-          const storedTotal = JSON.parse(raw);
-          if (storedTotal.totalSeconds !== undefined && storedTotal.totalSeconds !== this._total.totalSeconds) {
-            this._total.totalSeconds = Math.round(storedTotal.totalSeconds * 10) / 10;
-            console.log('[MoeKoe Stats] 检测到外部修改 totalSeconds，已同步为', this._total.totalSeconds);
-          }
-        }
-      } catch (e) {}
-
-      const track = getCurrentPlaybackInfo();
       const now = Date.now();
+      const track = getCurrentPlaybackInfo();
       const state = this._state;
 
-      // 无有效歌曲时清空状态
-      if (!track.title || track.title === '未知歌曲') {
-        state.lastTrackId = '';
+      // 场景1: 没有正在播放的有效歌曲
+      if (!track) {
+        // 可选：是否要在这里清空 lastTrackHash？建议保留，以便恢复播放时继续计算
+        // 这里我们只更新时间戳，防止恢复播放时时间差过大
         state.lastCheckTime = now;
         saveState(state);
-        saveTotal(this._total);
         return;
       }
 
-      const trackId = `${track.title}|${track.artist}`;
-      state.lastPlayedTrack = { title: track.title, artist: track.artist, time: now };
+      const currentHash = track.hash;
+      const currentPos = track.currentTime;
 
-      // 切换歌曲时重置位置
-      if (trackId !== state.lastTrackId) {
-        state.lastTrackId = trackId;
-        state.lastPosition = track.currentTime;
+      // 场景2: 切歌了 (Hash 变化)
+      if (currentHash !== state.lastTrackHash) {
+        console.log(`[MoeKoe Stats] 检测到切歌: ${track.title}`);
+        state.lastTrackHash = currentHash;
+        state.lastPosition = currentPos;
         state.lastCheckTime = now;
         saveState(state);
-        saveTotal(this._total);
+        // 切歌瞬间不累加，防止误差
         return;
       }
 
-      const timeDiffSec = (now - state.lastCheckTime) / 1000;
-      const posDiff = track.currentTime - state.lastPosition;
+      // 场景3: 同一首歌，计算增量
+      const timeDiffSec = (now - state.lastCheckTime) / 1000; // 真实流逝时间
+      const posDiff = currentPos - state.lastPosition;         // 播放器进度增量
 
-      // 正常播放：累加有效时间
-      if (posDiff > 0 && posDiff <= timeDiffSec + 2) {
-        this._total.totalSeconds += posDiff;
-        this._total.totalSeconds = Math.round(this._total.totalSeconds * 10) / 10;
-        state.lastPosition = track.currentTime;
-      } else if (posDiff !== 0) {
-        state.lastPosition = track.currentTime; // 跳转时修正位置
-      }
-
+      // 更新检查时间
       state.lastCheckTime = now;
+
+      // 异常处理：posDiff 为负数（用户拖拽后退）或 0（暂停）
+      if (posDiff <= 0) {
+        // 如果是拖拽后退，更新基准位置，但不累加时长
+        if (posDiff < 0) {
+           state.lastPosition = currentPos;
+        }
+        saveState(state);
+        return;
+      }
+
+      // 核心校验：防止加速播放或系统卡顿导致的错误累加
+      // 允许一定的缓冲误差 (例如 2秒)，因为 setInterval 可能不准
+      if (posDiff <= timeDiffSec + 2) {
+        // 正常播放：累加实际播放的进度差
+        this._total.totalSeconds += posDiff;
+        state.lastPosition = currentPos;
+      } else {
+        // 异常情况：进度跳变过大（比如拖拽前进，或者网页刚加载完进度突然同步）
+        // 策略：只更新基准位置，不累加这段“瞬移”的时间，防止刷时长
+        // 如果希望拖拽前进也算时间（虽然不合理），可以放开下面这行，但通常不建议
+        // this._total.totalSeconds += timeDiffSec; 
+        state.lastPosition = currentPos;
+        console.log('[MoeKoe Stats] 检测到进度跳变，已修正基准位置，未累加时长');
+      }
+
+      // 确保总时长不为负
+      if (this._total.totalSeconds < 0) this._total.totalSeconds = 0;
+      
+      // 保存
       saveState(state);
       saveTotal(this._total);
     },
 
-    // 获取总秒数（供UI使用）
     getTotalSeconds: function() {
       return this._total.totalSeconds;
     }
   };
 
   // 定时更新（每秒）
-  setInterval(() => stats.update(), 1000);
-  window.addEventListener('beforeunload', () => stats.update());
+  const timerId = setInterval(() => stats.update(), 1000);
+  
+  // 页面卸载前最后更新一次
+  window.addEventListener('beforeunload', () => {
+    stats.update();
+    clearInterval(timerId);
+  });
 
-  // 暴露核心对象（仅用于查看，不提供修改）
+  // 暴露核心对象
   window.MoeKoeStatsCore = {
     getTotalSeconds: stats.getTotalSeconds.bind(stats),
     getFormatted: () => formatHM(stats.getTotalSeconds())
   };
 
-  console.log('[MoeKoe Stats] 核心模块已加载，当前累计:', formatHM(stats.getTotalSeconds()));
+  console.log('[MoeKoe Stats] 核心模块已加载 (基于 current_song JSON)');
 })();
 
 
@@ -178,7 +207,7 @@
 (function() {
   'use strict';
 
-  const TOTAL_KEY = 'moekoe_playback_total';     // 与核心模块保持一致
+  const TOTAL_KEY = 'moekoe_playback_total';
 
   function loadTotal() {
     try {
@@ -190,12 +219,13 @@
       }
       return data;
     } catch (e) {
-      console.warn('[MoeKoe UI] 读取总时长失败，使用默认值');
+      console.warn('[MoeKoe UI] 读取总时长失败');
       return { totalSeconds: 0 };
     }
   }
 
   function formatHM(seconds) {
+    if (!seconds || seconds < 0) seconds = 0;
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     return hrs > 0 ? `${hrs}小时 ${mins}分钟` : `${mins}分钟`;
@@ -213,7 +243,8 @@
   }
 
   function ensureDisplayElement() {
-    const container = document.querySelector('.user-actions');
+    // 尝试多个可能的容器选择器，增加兼容性
+    const container = document.querySelector('.user-actions') || document.querySelector('.header-user') || document.body;
     if (!container) return false;
 
     let el = container.querySelector('.moekoe-custom-duration');
@@ -227,19 +258,48 @@
 
     el = document.createElement('span');
     el.className = 'moekoe-custom-duration';
-    el.style.cssText = 'background-color:#fff3; padding:3px 8px; border-radius:10px; color:#fff; margin-left:auto; font-size:12px; white-space:nowrap;';
+    
+    // 恢复原始样式风格，但添加 margin-left: auto 以靠右对齐
+    // 原始样式: background-color:#fff3; padding:3px 8px; border-radius:10px; color:#fff; margin-left:auto; font-size:12px; white-space:nowrap;
+    el.style.cssText = `
+      background-color: rgba(255, 255, 255, 0.2); /* #fff3 的近似值 */
+      padding: 3px 8px;
+      border-radius: 10px;
+      color: #fff;
+      margin-left: auto; /* 关键：在 flex 容器中推向右側 */
+      font-size: 12px;
+      white-space: nowrap;
+      cursor: default;
+      user-select: none;
+    `;
+    el.title = "累计播放时间";
+    
+    // 插入到容器末尾
     container.appendChild(el);
+    
     displayElement = el;
     updateDisplay();
     return true;
   }
 
+  // 监听 DOM 变化以确保持久显示
   const observer = new MutationObserver(() => ensureDisplayElement());
   observer.observe(document.body, { childList: true, subtree: true });
 
+  // 初始化
   ensureDisplayElement();
+  
+  // 每30秒刷新一次UI显示
   setInterval(updateDisplay, 30000);
+  
+  // 同时也监听 storage 事件，如果其他标签页更新了，当前页也能同步
+  window.addEventListener('storage', (e) => {
+    if (e.key === TOTAL_KEY) {
+      updateDisplay();
+    }
+  });
+
   window.addEventListener('beforeunload', () => observer.disconnect());
 
-  console.log('[MoeKoe UI] 独立UI模块已启动，直接读取本地存储');
+  console.log('[MoeKoe UI] 独立UI模块已启动');
 })();
