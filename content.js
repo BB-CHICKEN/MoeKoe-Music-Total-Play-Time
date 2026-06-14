@@ -2,6 +2,14 @@
 (function() {
   'use strict';
 
+  // 【新增】路由检查：只在主页面路由包含 /library 时执行
+  // 注意：某些 SPA 可能使用 history.pushState 而不是 hash，如果网站是 Hash 路由则用 location.hash
+  // 如果是 History 路由，请改用: if (!location.pathname.includes('/library'))
+  if (!location.hash.includes('/library') && !location.pathname.includes('/library')) {
+    console.log('[Total-Play-Time] 非主页面 (当前路径: ' + (location.hash || location.pathname) + ')，跳过统计模块');
+    return;
+  }
+
   const TOTAL_KEY = 'moekoe_playback_total';     // 存储总秒数
   const STATE_KEY = 'moekoe_playback_state';     // 存储播放状态
   const PROGRESS_KEY = 'player_progress';        // 当前播放进度(key可能因网站更新变动，需确认)
@@ -26,7 +34,7 @@
       }
       return data;
     } catch (e) {
-      console.warn('[MoeKoe Stats] 读取总时长失败，使用默认值');
+      console.warn('[Total-Play-Time] 读取总时长失败，使用默认值');
       return { ...defaultTotal };
     }
   }
@@ -37,7 +45,7 @@
       if (raw === null) return { ...defaultState };
       return JSON.parse(raw);
     } catch (e) {
-      console.warn('[MoeKoe Stats] 读取状态失败，使用默认值');
+      console.warn('[Total-Play-Time] 读取状态失败，使用默认值');
       return { ...defaultState };
     }
   }
@@ -49,7 +57,7 @@
       toSave.totalSeconds = Math.round(toSave.totalSeconds * 10) / 10;
       localStorage.setItem(TOTAL_KEY, JSON.stringify(toSave));
     } catch (e) {
-      console.error('[MoeKoe Stats] 保存总时长失败', e);
+      console.error('[[Total-Play-Time]] 保存总时长失败', e);
     }
   }
 
@@ -57,7 +65,7 @@
     try {
       localStorage.setItem(STATE_KEY, JSON.stringify(state));
     } catch (e) {
-      console.error('[MoeKoe Stats] 保存状态失败', e);
+      console.error('[Total-Play-Time] 保存状态失败', e);
     }
   }
 
@@ -130,7 +138,7 @@
 
       // 场景2: 切歌了 (Hash 变化)
       if (currentHash !== state.lastTrackHash) {
-        console.log(`[MoeKoe Stats] 检测到切歌: ${track.title}`);
+        console.log(`[Total-Play-Time] 检测到切歌: ${track.title}`);
         state.lastTrackHash = currentHash;
         state.lastPosition = currentPos;
         state.lastCheckTime = now;
@@ -168,7 +176,7 @@
         // 如果希望拖拽前进也算时间（虽然不合理），可以放开下面这行，但通常不建议
         // this._total.totalSeconds += timeDiffSec; 
         state.lastPosition = currentPos;
-        console.log('[MoeKoe Stats] 检测到进度跳变，已修正基准位置，未累加时长');
+        console.log('[Total-Play-Time] 检测到进度跳变，已修正基准位置，未累加时长');
       }
 
       // 确保总时长不为负
@@ -199,13 +207,19 @@
     getFormatted: () => formatHM(stats.getTotalSeconds())
   };
 
-  console.log('[MoeKoe Stats] 核心模块已加载 (基于 current_song JSON)');
+  console.log('[Total-Play-Time] 核心模块已加载');
 })();
 
 
 // ==================== UI 显示模块 ====================
 (function() {
   'use strict';
+
+  // 【新增】路由检查：只在主页面路由包含 /library 时执行
+  if (!location.hash.includes('/library') && !location.pathname.includes('/library')) {
+    console.log('[Total-Play-Time] 非主页面 (当前路径: ' + (location.hash || location.pathname) + ')，跳过UI模块');
+    return;
+  }
 
   const TOTAL_KEY = 'moekoe_playback_total';
 
@@ -219,7 +233,7 @@
       }
       return data;
     } catch (e) {
-      console.warn('[MoeKoe UI] 读取总时长失败');
+      console.warn('[Total-Play-Time] 读取总时长失败');
       return { totalSeconds: 0 };
     }
   }
@@ -243,42 +257,63 @@
   }
 
   function ensureDisplayElement() {
-    // 尝试多个可能的容器选择器，增加兼容性
-    const container = document.querySelector('.user-actions') || document.querySelector('.header-user') || document.body;
-    if (!container) return false;
-
-    let el = container.querySelector('.moekoe-custom-duration');
-    if (el) {
-      if (displayElement !== el) {
-        displayElement = el;
-        updateDisplay();
+    // 1. 精准定位容器
+    let container = null;
+    
+    // 策略 A: 优先寻找带有 Vue scoped 标识 (.user-actions[data-v-xxx]) 的容器
+    // 使用属性选择器 [data-v-*] 可能效率较低，通常我们不知道具体的 hash，所以遍历更稳妥
+    const candidates = document.querySelectorAll('.user-actions');
+    for (const div of candidates) {
+      // 检查是否有以 data-v- 开头的属性
+      const hasVueScope = Array.from(div.attributes).some(attr => attr.name.startsWith('data-v-'));
+      if (hasVueScope) {
+        container = div;
+        break; // 找到第一个符合 Vue 特征的即停止，通常这就是主界面容器
       }
-      return true;
     }
 
-    el = document.createElement('span');
-    el.className = 'moekoe-custom-duration';
+    // 策略 B: 如果没找到 Vue 特征容器，回退到普通选择器
+    if (!container) {
+      container = document.querySelector('.user-actions') || document.querySelector('.header-user');
+    }
     
-    // 恢复原始样式风格，但添加 margin-left: auto 以靠右对齐
-    // 原始样式: background-color:#fff3; padding:3px 8px; border-radius:10px; color:#fff; margin-left:auto; font-size:12px; white-space:nowrap;
-    el.style.cssText = `
-      background-color: rgba(255, 255, 255, 0.2); /* #fff3 的近似值 */
-      padding: 3px 8px;
-      border-radius: 10px;
-      color: #fff;
-      margin-left: auto; /* 关键：在 flex 容器中推向右側 */
-      font-size: 12px;
-      white-space: nowrap;
-      cursor: default;
-      user-select: none;
-    `;
-    el.title = "累计播放时间";
+    // 策略 C: 最后回退到 body (防止完全找不到)
+    if (!container) {
+      container = document.body;
+    }
+
+    // 2. 在确定的容器中查找或创建显示元素
+    let el = container.querySelector('.moekoe-custom-duration');
     
-    // 插入到容器末尾
-    container.appendChild(el);
+    if (!el) {
+      el = document.createElement('span'); // 建议使用 span，因为它是行内元素，更适合嵌入文字流
+      el.className = 'moekoe-custom-duration';
+      el.title = "累计播放时间";
+      
+      // 应用样式 (保持与原代码一致)
+      el.style.cssText = `
+        background-color: rgba(255, 255, 255, 0.2);
+        padding: 3px 8px;
+        border-radius: 10px;
+        color: #fff;
+        margin-left: auto;
+        font-size: 12px;
+        white-space: nowrap;
+        cursor: default;
+        user-select: none;
+        display: inline-flex; /* 确保布局稳定 */
+        align-items: center;
+      `;
+      
+      container.appendChild(el);
+    }
+
+    // 3. 更新全局引用并显示
+    if (displayElement !== el) {
+      displayElement = el;
+      updateDisplay();
+    }
     
-    displayElement = el;
-    updateDisplay();
     return true;
   }
 
@@ -301,5 +336,5 @@
 
   window.addEventListener('beforeunload', () => observer.disconnect());
 
-  console.log('[MoeKoe UI] 独立UI模块已启动');
+  console.log('[Total-Play-Time] 主页插入成功');
 })();
