@@ -3,7 +3,7 @@
   "name": "MoeKoe Music 累计听歌时长插件",
   "plugin_id":"Total-Play-time",
   "version": "2.2.0",
-  "moekoe ": true,
+  "moekoe": true,
   "description": "在你的个人主页右下角显示累计听歌时长",
   "author": {
     "name": "BB-Ji",
