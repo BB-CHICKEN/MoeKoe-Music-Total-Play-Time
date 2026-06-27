@@ -215,9 +215,9 @@
 (function() {
   'use strict';
 
-  // 【新增】路由检查：只在主页面路由包含 /library 时执行
+  // 路由检查：只在主页面路由包含 /library 时执行
   if (!location.hash.includes('/library') && !location.pathname.includes('/library')) {
-    console.log('[Total-Play-Time] 非主页面 (当前路径: ' + (location.hash || location.pathname) + ')，跳过UI模块');
+    console.log('[Total-Play-Time] 非主页面，跳过UI模块');
     return;
   }
 
@@ -257,40 +257,32 @@
   }
 
   function ensureDisplayElement() {
-    // 1. 精准定位容器
+    // 仅使用方案 A：寻找带有 Vue scoped 标识的 .user-actions 容器
     let container = null;
-    
-    // 策略 A: 优先寻找带有 Vue scoped 标识 (.user-actions[data-v-xxx]) 的容器
-    // 使用属性选择器 [data-v-*] 可能效率较低，通常我们不知道具体的 hash，所以遍历更稳妥
     const candidates = document.querySelectorAll('.user-actions');
     for (const div of candidates) {
-      // 检查是否有以 data-v- 开头的属性
       const hasVueScope = Array.from(div.attributes).some(attr => attr.name.startsWith('data-v-'));
       if (hasVueScope) {
         container = div;
-        break; // 找到第一个符合 Vue 特征的即停止，通常这就是主界面容器
+        break;
       }
     }
 
-    // 策略 B: 如果没找到 Vue 特征容器，回退到普通选择器
+    // 未找到符合条件的容器，则不创建元素
     if (!container) {
-      container = document.querySelector('.user-actions') || document.querySelector('.header-user');
-    }
-    
-    // 策略 C: 最后回退到 body (防止完全找不到)
-    if (!container) {
-      container = document.body;
+      // 如果之前有显示元素但容器消失了，可考虑移除或保留，此处简单置空引用
+      if (displayElement) {
+        displayElement = null;
+      }
+      return false;
     }
 
-    // 2. 在确定的容器中查找或创建显示元素
+    // 在容器中查找或创建显示元素
     let el = container.querySelector('.moekoe-custom-duration');
-    
     if (!el) {
-      el = document.createElement('span'); // 建议使用 span，因为它是行内元素，更适合嵌入文字流
+      el = document.createElement('span');
       el.className = 'moekoe-custom-duration';
-      el.title = "累计播放时间";
-      
-      // 应用样式 (保持与原代码一致)
+      el.title = '累计播放时间';
       el.style.cssText = `
         background-color: rgba(255, 255, 255, 0.2);
         padding: 3px 8px;
@@ -301,33 +293,29 @@
         white-space: nowrap;
         cursor: default;
         user-select: none;
-        display: inline-flex; /* 确保布局稳定 */
+        display: inline-flex;
         align-items: center;
       `;
-      
       container.appendChild(el);
     }
 
-    // 3. 更新全局引用并显示
     if (displayElement !== el) {
       displayElement = el;
       updateDisplay();
     }
-    
     return true;
   }
 
-  // 监听 DOM 变化以确保持久显示
+  // 监听 DOM 变化以应对 SPA 路由切换
   const observer = new MutationObserver(() => ensureDisplayElement());
   observer.observe(document.body, { childList: true, subtree: true });
 
   // 初始化
   ensureDisplayElement();
-  
-  // 每30秒刷新一次UI显示
+
+  // 每30秒刷新显示（数据可能在其他标签页更新）
   setInterval(updateDisplay, 30000);
-  
-  // 同时也监听 storage 事件，如果其他标签页更新了，当前页也能同步
+
   window.addEventListener('storage', (e) => {
     if (e.key === TOTAL_KEY) {
       updateDisplay();
